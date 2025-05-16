@@ -6,6 +6,7 @@ from jax import config
 config.update("jax_enable_x64", True)
 import numpy as np
 import jax
+import pandas as pd
 
 
 # jax.default_device(jax.devices("gpu")[0])
@@ -27,6 +28,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import matplotlib.style as mplstyle
+from mpl_toolkits.mplot3d import Axes3D
 
 # import imageio
 import imageio.v2 as imageio
@@ -78,7 +80,7 @@ def main(args):
     #                 # [10,10,z_elevation,10,10,0],
     #                 [20,20,z_elevation,5,-5,0]])
     xy_pos = jax.random.uniform(key1, shape=(3, 2), minval=-100.0, maxval=100.0)  # columns 0,1
-    xy_vel = jax.random.uniform(key2, shape=(3, 2), minval=-10.0, maxval=10.0)  # columns 3,4
+    xy_vel = jax.random.uniform(key2, shape=(3, 2), minval=-25.0, maxval=25.0)  # columns 3,4
     z_pos = jnp.array([z_elevation + 10, z_elevation - 15, z_elevation + 20]).reshape(-1, 1)
     z_vel = jnp.zeros((3, 1))
     if args.N_radar == 3:
@@ -441,7 +443,7 @@ def main(args):
 
         FIMs[step // update_freq_control - 1] = jnp.linalg.slogdet(J)[1].sum().item()
 
-        if ((step % args.frame_skip) == 0) and ((step % update_freq_control) == 0) and args.save_images:
+        if ((step % args.frame_skip) == 0) and ((step % update_freq_control) == 0) and (args.save_images or args.save_track):
             print(f"Step {step} - Saving Figure ")
 
             axes_main[0].plot(radar_state_init[:, 0], radar_state_init[:, 1], 'mo',
@@ -482,6 +484,7 @@ def main(args):
                            R2T=args.R2T, R2R=args.R2R,C=C,
                            fig=fig_main, axes=axes_main, step=step,
                            tmp_photo_dir = args.tmp_img_savepath, filename = "MPPI_CKF"))
+
 
             except Exception as error:
                 print("Tracking Img Could Not save: ", error)
@@ -543,25 +546,109 @@ def main(args):
         if args.remove_tmp_images:
             shutil.rmtree(args.tmp_img_savepath)
 
+    if args.save_track:
+        targets_traj = jnp.vstack([target_states_true[0:3, :], target_states_true[6:9, :], target_states_true[12:15, :]])
+        radars_traj = radar_state_history[:, :, :3]
+        plot_file_name = os.path.join(args.results_savepath,f'trajectory_seed_{args.seed}.png')
+        plot_traj(targets_traj, radars_traj, plot_file_name)
+        save_file_name_target = os.path.join(args.results_savepath,f'target_seed_{args.seed}.csv')
+        save_file_name_radar = os.path.join(args.results_savepath, f'radar_seed_{args.seed}.csv')
+        save_trajectories_to_csv(targets_traj, radars_traj, save_file_name_target, save_file_name_radar)
+
+
+def plot_traj(targets_traj, radars_traj, path):
+    targets_traj = np.array(targets_traj)
+    radars_traj = np.array(radars_traj)
+
+    N = targets_traj.shape[1]
+    n = radars_traj.shape[0]
+    targets = targets_traj.reshape(3, 3, N)  # (target_id, xyz, time)
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+
+    # Style config
+    dark_green = '#2e8b57'
+    target_marker_color = '#006400'
+    radar_traj_color = '#8b0000'  # DarkRed
+    radar_marker_color = '#ff0000'  # Bright Red
+
+    # === Plot target trajectories ===
+    for i in range(3):
+        x = targets[i, 0]
+        y = targets[i, 1]
+        for t in range(1, N):
+            alpha = 0.3 + 0.7 * t / N
+            ax.plot(x[t - 1:t + 1], y[t - 1:t + 1], color=dark_green, linewidth=2, alpha=alpha)
+        ax.plot(x[-1], y[-1], 'o', color=target_marker_color, markersize=6,
+                label='Target Position' if i == 0 else "")
+
+    # === Plot radar trajectories ===
+    for r in range(6):  # 6 radars
+        x = radars_traj[:, r, 0]
+        y = radars_traj[:, r, 1]
+        for t in range(1, n):
+            alpha = 0.2 + 0.6 * t / n
+            ax.plot(x[t - 1:t + 1], y[t - 1:t + 1], color=radar_traj_color, linewidth=1.5, alpha=alpha)
+        # current radar position
+        ax.plot(x[-1], y[-1], 's', color=radar_marker_color, markersize=5,
+                label='Radar Position' if r == 0 else "")
+
+    # Aesthetics
+    ax.set_xlabel('x [m]')
+    ax.set_ylabel('y [m]')
+    ax.grid(True, linestyle='--', linewidth=0.5)
+    ax.set_aspect('equal')
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(path, dpi=300)
+
+
+def save_trajectories_to_csv(targets_traj, radars_traj, target_file, radar_file):
+    # Convert to NumPy
+    targets_traj = np.array(targets_traj)
+    radars_traj = np.array(radars_traj)
+
+    # === Save targets_traj ===
+    # Transpose to shape (N, 9)
+    targets_reshaped = targets_traj.T  # (N, 9)
+    target_columns = []
+    for i in range(3):
+        target_columns += [f'Target{i}_x', f'Target{i}_y', f'Target{i}_z']
+    df_targets = pd.DataFrame(targets_reshaped, columns=target_columns)
+    df_targets.to_csv(target_file, index=False)
+
+    # === Save radars_traj ===
+    # Reshape to (n, 18): 6 radars × 3 coords
+    n = radars_traj.shape[0]
+    radars_flattened = radars_traj.reshape(n, -1)  # shape (n, 18)
+    radar_columns = []
+    for i in range(6):
+        radar_columns += [f'Radar{i}_x', f'Radar{i}_y', f'Radar{i}_z']
+    df_radars = pd.DataFrame(radars_flattened, columns=radar_columns)
+    df_radars.to_csv(radar_file, index=False)
+
+    print(f'Saved targets to {target_file} and radars to {radar_file}')
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description = 'Optimal Radar Placement', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
 
     # =========================== Experiment Choice ================== #
-    parser.add_argument('--seed',default=123,type=int, help='Random seed to kickstart all randomness')
+    parser.add_argument('--seed',default=3,type=int, help='Random seed to kickstart all randomness')
     parser.add_argument('--frame_skip',default=4,type=int, help='Save the images at every nth frame (must be a multiple of the update on the control frequency, which is dt control / dt ckf)')
     parser.add_argument('--dt_ckf', default=0.025,type=float, help='Frequency at which the radar receives measurements and updated Cubature Kalman Filter')
     parser.add_argument('--dt_control', default=0.1,type=float,help='Frequency at which the control optimization problem occurs with MPPI')
     parser.add_argument('--N_radar',default=6,type=int,help="The number of radars in the experiment")
-    parser.add_argument("--N_steps",default=8,type=int,help="The number of steps in the experiment. Total real time duration of experiment is N_steps x dt_ckf")
+    parser.add_argument("--N_steps",default=400,type=int,help="The number of steps in the experiment. Total real time duration of experiment is N_steps x dt_ckf")
     parser.add_argument('--results_savepath', default="results",type=str, help='Folder to save bigger results folder')
     parser.add_argument('--experiment_name', default="experiment",type=str, help='Name of folder to save temporary images to make GIFs')
     parser.add_argument('--move_radars', action=argparse.BooleanOptionalAction,default=True,help='Do you wish to allow the radars to move? --move_radars for yes --no-move_radars for no')
     parser.add_argument('--remove_tmp_images', action=argparse.BooleanOptionalAction,default=False,help='Do you wish to remove tmp images? --remove_tmp_images for yes --no-remove_tmp_images for no')
     parser.add_argument('--tail_length',default=25,type=int,help="The length of the tail of the radar trajectories in plottings")
-    parser.add_argument('--save_images', action=argparse.BooleanOptionalAction,default=True,help='Do you wish to saves images/gifs? --save_images for yes --no-save_images for no')
+    parser.add_argument('--save_images', action=argparse.BooleanOptionalAction,default=False,help='Do you wish to saves images/gifs? --save_images for yes --no-save_images for no')
     parser.add_argument('--fim_method', default="SFIM",type=str, help='FIM Calculation [SFIM,PFIM,SFIM_bad,PFIM_bad]')
+    parser.add_argument('--save_track', action=argparse.BooleanOptionalAction, default=True,help='Do you wish to saves trajectories? --save_track for yes --no-save_track for no')
 
     # ==================== RADAR CONFIGURATION ======================== #
     parser.add_argument('--fc', default=1e9,type=float, help='Radar Signal Carrier Frequency (Hz)')
@@ -591,7 +678,7 @@ if __name__ == "__main__":
     # ============================ MPC Settings =====================================#
     parser.add_argument('--gamma', default=0.95,type=float, help="Discount Factor for MPC objective")
     parser.add_argument('--speed_minimum', default=5,type=float, help='Minimum speed Radars should move [m/s]')
-    parser.add_argument('--R2T', default=125,type=float, help='Radius from Radar to Target to maintain [m]')
+    parser.add_argument('--R2T', default=60,type=float, help='Radius from Radar to Target to maintain [m]')
     parser.add_argument('--R2R', default=10,type=float, help='Radius from Radar to  Radar to maintain [m]')
     parser.add_argument('--alpha1', default=1,type=float, help='Cost weighting for FIM')
     parser.add_argument('--alpha2', default=1000,type=float, help='Cost weighting for maintaining distanace between Radar to Target')
