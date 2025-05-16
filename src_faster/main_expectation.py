@@ -12,10 +12,12 @@ import jax
 
 import jax.numpy as jnp
 
+from sklearn.covariance import OAS,ledoit_wolf,oas
+
 from FIM_new.FIM_RADAR import SFIM_range,FIM_Visualization,SFIM_parallel,PFIM_parallel,PFIM_range
 from control.Sensor_Dynamics import UNI_SI_U_LIM,UNI_DI_U_LIM,unicycle_kinematics_single_integrator,unicycle_kinematics_double_integrator
 from utils import visualize_tracking,visualize_control,visualize_target_mse,place_sensors_restricted,visualize_tracking3D
-from control.MPPI import MPPI_scores_wrapper,weighting,MPPI_wrapper,MPPI_control #,MPPI_adapt_distribution
+from control.MPPI import MPPI_scores_wrapper,weighting,MPPI_wrapper #,MPPI_adapt_distribution
 from objective_fns.objectives import *
 import tracking.cubatureKalmanFilter as cubatureKalmanFilter
 from tracking.cubatureTestMLP import measurement_model,transition_model,generate_data_state,generate_measurement_noisy
@@ -26,7 +28,8 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 import matplotlib.style as mplstyle
 
-import imageio
+# import imageio
+import imageio.v2 as imageio
 
 from time import time
 import argparse
@@ -43,12 +46,8 @@ def main(args):
     np.random.seed(args.seed)
 
     # =========================== Experiment Choice ================== #
-    assert args.dt_control % args.dt_ckf == 0, "Control Frequency must be a multiple of CKF Frequency"
     update_freq_control = int(args.dt_control/args.dt_ckf) #4
     update_freq_ckf = 1
-
-    args.update_freq_control = update_freq_control
-    args.update_freq_ckf = update_freq_ckf
 
     # ==================== RADAR setup ======================== #
     # speed of light
@@ -70,6 +69,7 @@ def main(args):
 
     # ==================== AIS CONFIGURATION ================================= #
     key, subkey = jax.random.split(key)
+    key1, key2 = jax.random.split(key)
     #
 
     z_elevation = 60
@@ -77,6 +77,10 @@ def main(args):
     #                 [-50.4,30.32,z_elevation,-20,-10,0], #,
     #                 # [10,10,z_elevation,10,10,0],
     #                 [20,20,z_elevation,5,-5,0]])
+    xy_pos = jax.random.uniform(key1, shape=(3, 2), minval=-100.0, maxval=100.0)  # columns 0,1
+    xy_vel = jax.random.uniform(key2, shape=(3, 2), minval=-10.0, maxval=10.0)  # columns 3,4
+    z_pos = jnp.array([z_elevation + 10, z_elevation - 15, z_elevation + 20]).reshape(-1, 1)
+    z_vel = jnp.zeros((3, 1))
     if args.N_radar == 3:
         target_state = jnp.array([[0.0, -0.0,z_elevation-5, 20., 10,0], #,#,
                     [15.4,15.32,z_elevation+10,15,20,0], #,
@@ -84,10 +88,10 @@ def main(args):
                     [20,20,z_elevation-15,6,8,0]])
 
     elif args.N_radar == 6 or args.N_radar==5:
-        target_state = jnp.array([[0.0, -0.0,z_elevation+10, 25., 20,0], #,#,
-                        [-100.4,-30.32,z_elevation-15,20,-10,0], #,
-                        [30,30,z_elevation+20,-10,-10,0]])#,
-
+        # target_state = jnp.array([[0.0, -0.0,z_elevation+10, 25., 20,0], #,#,
+        #                 [-100.4,-30.32,z_elevation-15,20,-10,0], #,
+        #                 [30,30,z_elevation+20,-10,-10,0]])#,
+        target_state = jnp.hstack([xy_pos, z_pos, xy_vel, z_vel])
     elif args.N_radar == 4:
         target_state = jnp.array([[0.0, 15,z_elevation+10, 15., 15,0], #,#,
                     [40.4,15,z_elevation+10,15,15,0], #,
@@ -97,8 +101,6 @@ def main(args):
         target_state = jnp.array([[0.0, -0.0,z_elevation+10, 25., 20,0], #,#,
                         [-100.4,-30.32,z_elevation-15,20,-10,0], #,
                         [30,30,z_elevation+20,-10,-10,0]])#,
-
-    args.M_target = target_state.shape[0]
 
     ps,key = place_sensors_restricted(key,target_state,args.R2R,args.R2T,-400,400,args.N_radar)
     chis = jax.random.uniform(key,shape=(ps.shape[0],1),minval=-jnp.pi,maxval=jnp.pi)
@@ -110,9 +112,6 @@ def main(args):
 
     M_target, dm = target_state.shape;
     _ , dn = radar_state.shape;
-
-    args.dm = dm
-    args.dn = dn
 
     sigmaW = jnp.sqrt(M_target*Pr/ (10**(args.SNR/10)))
     # coef = Gt * Gr * lam ** 2 * rcs / L / (4 * jnp.pi)** 3 / (R ** 4)
@@ -210,7 +209,7 @@ def main(args):
 
     MPPI_scores = MPC_obj
 
-    MPPI_kinematics = MPPI_wrapper(kinematic_model=kinematic_model,dt=args.dt_control)
+    MPPI = MPPI_wrapper(kinematic_model=kinematic_model,dt=args.dt_control)
 
     if args.AIS_method == "CE":
         weight_fn = partial(weighting(args.AIS_method),elite_threshold=args.elite_threshold)
@@ -279,6 +278,7 @@ def main(args):
 
 
         best_mppi_iter_score = np.inf
+        mppi_round_time_start = time()
 
         # need dimension Horizon x Number of Targets x Dim of Targets
         # target_states_rollout = jnp.stack([(jnp.linalg.matrix_power(A,t-1) @ m0.reshape(-1, M_target * dm).T).T.reshape(M_target, dm) for t in range(1,horizon+1)])
@@ -287,15 +287,139 @@ def main(args):
             if (step % update_freq_control == 0):
                 print(f"\n Step {step} MPPI CONTROL ")
 
-                # set process noise to controller (same time frequency)
-                ckf.Q = Q
+                # number of radars x horizon x 2
+                U_prime = deepcopy(U)
+                cov_prime = deepcopy(cov)
 
-                # perform MPPI control!
+                # the cubature kalman filter points propogated over horizon. Horizon x # Sigma Points x (Number of targets * dim of target)
+                ckf.Q = Q
+                target_states_ckf = ckf.predict_propogate(ckf.x, ckf.P, args.horizon, dt=args.dt_control, fx_args=(M_target,))
+                # target_states_ckf = np.swapaxes(target_states_ckf.mean(axis=1).reshape(args.horizon, M_target, dm), 1, 0)
+
+                # move_axis_start = time()
+                # # Sigma Points x Number of targets x horizon x dm
+                target_states_ckf = np.moveaxis(target_states_ckf.reshape(args.horizon,dm*M_target*2,M_target,dm),source=0,destination=-2)
+                # move_axis_end = time()
+                # print("MOVE AXIS Sample: ",move_axis_end-move_axis_start)
+
                 mppi_start_time = time()
-                U,(radar_states,radar_states_MPPI),(cost_MPPI,cost_trajectory,cost_collision_r2t,cost_collision_r2r),key = MPPI_control(radar_state,U,cov,key,
-                 A,J,control_constraints,
-                 kinematic_model,ckf,MPPI_kinematics,MPPI_scores,weight_fn,collision_penalty,self_collision_penalty_vmap,args)
+
+
+                for mppi_iter in range(args.MPPI_iterations):
+                    # start = time()
+                    key, subkey = jax.random.split(key)
+
+                    # mppi_start = time()
+
+                    # mppi_sample_start = time()
+
+                    try:
+                        E = jax.random.multivariate_normal(key, mean=jnp.zeros_like(U).ravel(), cov=cov_prime, shape=(args.num_traj,))#,method="svd")
+                    except:
+                        E = jax.random.multivariate_normal(key, mean=jnp.zeros_like(U).ravel(), cov=cov_prime, shape=(args.num_traj,),method="svd")
+
+                    # simulate the model with the trajectory noise samples
+                    # number of traj x number of radars x horizon x 2
+                    V = U_prime + E.reshape(args.num_traj,args.N_radar,args.horizon,2)
+                    # mppi_sample_end = time()
+                    # print("MPPI Sample TIME: ",mppi_sample_end-mppi_sample_end)
+
+                    # number of radars x horizon+1 x dn
+                    # number of traj x number of radars x horizon+1 x dn
+                    radar_states,radar_states_MPPI = MPPI(U_nominal=U_prime,
+                                                                       U_MPPI=V,radar_state=radar_state)
+
+
+                    # GET MPC OBJECTIVE
+                    # mppi_score_start = time()
+                    # Score all the rollouts
+                    cost_trajectory = MPPI_scores(V,radar_state, target_states_ckf,
+                                              J,A)
+
+                    # mppi_score_end = time()
+                    # print(cost_trajectory)
+                    # print("MPPI SCORE TIME: ",mppi_score_end-mppi_score_start)
+
+
+                    # mppi_score_other_start = time()
+                    cost_collision_r2t = collision_penalty(radar_states_MPPI[...,1:args.horizon+1,:], target_states_ckf,
+                                           args.R2T)
+
+                    cost_collision_r2t = jnp.sum((cost_collision_r2t * args.gamma**(jnp.arange(args.horizon))) / jnp.sum(args.gamma**jnp.arange(args.horizon)),axis=-1)
+
+                    cost_collision_r2r = self_collision_penalty_vmap(radar_states_MPPI[...,1:args.horizon+1,:], args.R2R)
+                    cost_collision_r2r = jnp.sum((cost_collision_r2r * args.gamma**(jnp.arange(args.horizon))) / jnp.sum(args.gamma**jnp.arange(args.horizon)),axis=-1)
+
+                    # mppi_score_other_end = time()
+                    # print("MPPI OTHER SCORE TIME: ",mppi_score_other_end-mppi_score_other_start)
+
+                    cost_MPPI = args.alpha1*cost_trajectory + args.alpha2*cost_collision_r2t + args.alpha3 * cost_collision_r2r * args.temperature
+
+
+                    weights = weight_fn(cost_MPPI)
+
+
+                    if jnp.isnan(cost_MPPI).any():
+                        print("BREAK!")
+                        break
+
+                    if (mppi_iter < (args.MPPI_iterations-1)): #and (jnp.sum(cost_MPPI*weights) < best_cost):
+
+                        # best_cost = jnp.sum(cost_MPPI*weights)
+
+                        # U_copy = deepcopy(U_prime)
+                        # number of radars x horizon x 2
+                        U_prime = U_prime + jnp.sum(weights.reshape(args.num_traj,1,1,1) * E.reshape(args.num_traj,args.N_radar,args.horizon,2),axis=0)
+
+                        # oracle_start = time()
+                        oas_cov,shrinkage = ledoit_wolf(X=E[weights != 0],assume_centered=True)
+                        # oas_cov,shrinkage = oas(X=E[weights != 0],assume_centered=True)
+
+                        # oracle_end = time()
+                        # print("Oracle Time: ", oracle_end - oracle_start)
+                        cov_prime = jnp.array(oas_cov)
+                        if mppi_iter == 0:
+                            # print("Oracle Approx Shrinkage: ",np.round(shrinkage,5))
+                            pass
+                # mppi_round_time_end = time()
+
+                if jnp.isnan(cost_MPPI).any():
+                    print("BREAK!")
+                    break
+
+                # mppi_weight_start = time()
+                weights = weight_fn(cost_MPPI)
+                # mppi_weight_end = time()
+                # print("Weight time: ",mppi_weight_end-mppi_weight_start)
+
+                mean_shift = (U_prime - U)
+
+                E_prime = E + mean_shift.ravel()
+
+                U += jnp.sum(weights.reshape(-1,1,1,1) * E_prime.reshape(args.num_traj,args.N_radar,args.horizon,2),axis=0)
+
+                U = jnp.stack((jnp.clip(U[:,:,0],control_constraints[0,0],control_constraints[1,0]),jnp.clip(U[:,:,1],control_constraints[0,1],control_constraints[1,1])),axis=-1)
+
+                # jnp.repeat(U,update_freq_control,axis=1)
+
+                # radar_states = kinematic_model(U ,radar_state, dt_control)
                 mppi_end_time = time()
+
+                # generate radar states at measurement frequency
+                # mppi_kinematic_start = time()
+
+                # number of radar x steps of update freq control x dn
+                radar_states = kinematic_model(np.repeat(U, update_freq_control, axis=1)[:, :update_freq_control, :],
+                                               radar_state, args.dt_ckf)
+
+                # weights = weight_fn(cost_MPPI)
+                # mppi_kinematic_end = time()
+                # print("Kinematic time: ",mppi_kinematic_end-mppi_kinematic_start)
+
+                # U += jnp.clip(jnp.sum(weights.reshape(args.num_traj,1,1,1) *  E.reshape(args.num_traj,N,horizon,2),axis=0),U_lower,U_upper)
+
+                # radar_state = radar_states[:,1]
+                U = jnp.roll(U, -1, axis=1)
 
                 print(f"MPPI Round Time {step} ",np.round(mppi_end_time-mppi_start_time,3))
                 mppi_times[step // update_freq_control - 1] = mppi_end_time-mppi_start_time
@@ -416,9 +540,10 @@ def main(args):
         images = [imageio.imread(file) for file in imgs_control]
         imageio.mimsave(os.path.join(args.results_savepath, f'MPPI_Control_AIS={args.AIS_method}.gif'), images, duration=0.1)
 
-
         if args.remove_tmp_images:
             shutil.rmtree(args.tmp_img_savepath)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description = 'Optimal Radar Placement', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
@@ -429,17 +554,17 @@ if __name__ == "__main__":
     parser.add_argument('--dt_ckf', default=0.025,type=float, help='Frequency at which the radar receives measurements and updated Cubature Kalman Filter')
     parser.add_argument('--dt_control', default=0.1,type=float,help='Frequency at which the control optimization problem occurs with MPPI')
     parser.add_argument('--N_radar',default=6,type=int,help="The number of radars in the experiment")
-    parser.add_argument("--N_steps",default=600,type=int,help="The number of steps in the experiment. Total real time duration of experiment is N_steps x dt_ckf")
+    parser.add_argument("--N_steps",default=8,type=int,help="The number of steps in the experiment. Total real time duration of experiment is N_steps x dt_ckf")
     parser.add_argument('--results_savepath', default="results",type=str, help='Folder to save bigger results folder')
     parser.add_argument('--experiment_name', default="experiment",type=str, help='Name of folder to save temporary images to make GIFs')
     parser.add_argument('--move_radars', action=argparse.BooleanOptionalAction,default=True,help='Do you wish to allow the radars to move? --move_radars for yes --no-move_radars for no')
-    parser.add_argument('--remove_tmp_images', action=argparse.BooleanOptionalAction,default=True,help='Do you wish to remove tmp images? --remove_tmp_images for yes --no-remove_tmp_images for no')
+    parser.add_argument('--remove_tmp_images', action=argparse.BooleanOptionalAction,default=False,help='Do you wish to remove tmp images? --remove_tmp_images for yes --no-remove_tmp_images for no')
     parser.add_argument('--tail_length',default=25,type=int,help="The length of the tail of the radar trajectories in plottings")
     parser.add_argument('--save_images', action=argparse.BooleanOptionalAction,default=True,help='Do you wish to saves images/gifs? --save_images for yes --no-save_images for no')
     parser.add_argument('--fim_method', default="SFIM",type=str, help='FIM Calculation [SFIM,PFIM,SFIM_bad,PFIM_bad]')
 
     # ==================== RADAR CONFIGURATION ======================== #
-    parser.add_argument('--fc', default=1e8,type=float, help='Radar Signal Carrier Frequency (Hz)')
+    parser.add_argument('--fc', default=1e9,type=float, help='Radar Signal Carrier Frequency (Hz)')
     parser.add_argument('--Gt', default=200,type=float, help='Radar Transmit Gain')
     parser.add_argument('--Gr', default=200,type=float, help='Radar Receive Gain')
     parser.add_argument('--rcs', default=1,type=float, help='Radar Cross Section in m^2')
@@ -489,7 +614,6 @@ if __name__ == "__main__":
     from jax.lib import xla_bridge
 
     tz = timezone('EST')
-    print("Results saved @ ",args.results_savepath)
     print("Experiment State @ ",datetime.now(tz))
     print("Experiment Saved @ ",args.results_savepath)
     print("Experiment Settings Saved @ ",args.results_savepath)
