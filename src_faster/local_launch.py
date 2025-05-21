@@ -13,18 +13,19 @@ os.makedirs("logs",exist_ok=True)
 blocking=True
 
 # =========================== Experiment Choice ================== #
-seed=np.arange(0,1000,2)
+seed=np.arange(0,1000,1)
 frame_skip=[4]
 dt_ckf=[0.025]
 dt_control=[0.1]
-N_radar=[4]
-N_steps=[600]
-move_radars = ["move_radars","no-move_radars"]
+N_radar=[6]
+N_steps=[500]
+# move_radars = ["move_radars","no-move_radars"]
+move_radars = ["move_radars"]
 remove_tmp_images = ["remove_tmp_images"]
 save_images = ["no-save_images"]
 
 # ==================== RADAR CONFIGURATION ======================== #
-fc=[1e8]
+fc=[1e9]
 Gt=[200]
 Gr=[200]
 rcs=[1]
@@ -40,8 +41,8 @@ ang_acc_std=[45*np.pi/180]
 horizon=[15]
 acc_init=[0]
 ang_acc_init=[0 * np.pi/180]
-num_traj=[200] # 250
-MPPI_iterations=[5] # 25
+num_traj=[250] # 250
+MPPI_iterations=[25] # 25
 
 # ==================== AIS  CONFIGURATION ======================== #
 temperature=[0.1]
@@ -51,7 +52,7 @@ AIS_method=["CE"]
 # ============================ MPC Settings =====================================#
 gamma =[0.95]
 speed_minimum=[5]
-R2T=[125]
+R2T=[60]
 R2R=[10]
 alpha1=[1]
 alpha2=[1000]
@@ -61,7 +62,8 @@ alpha5=[0]
 
 import GPUtil
 multi_device=True
-fim_methods = ["SFIM","SFIM_bad","PFIM","PFIM_bad"]
+# fim_methods = ["SFIM","SFIM_bad","PFIM","PFIM_bad"]
+fim_methods = ["SFIM"]
 
 for fim_method in fim_methods:
     for move_radar in move_radars:
