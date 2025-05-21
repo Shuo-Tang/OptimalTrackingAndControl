@@ -459,42 +459,42 @@ def main(args):
             radar_state_history[step // update_freq_control - 1] = radar_state
 
 
-            try:
-                pass
-                # imgs_main3d.append(visualize_tracking3D(target_state_true=target_state_true, target_state_ckf=ckf.x.reshape(M_target,dm),target_states_true=target_states_true.T.reshape(-1,M_target,dm)[:step],
-                #            radar_state=radar_state,radar_states_MPPI=radar_states_MPPI,
-                #            cost_MPPI=cost_MPPI,
-                #            R2T=args.R2T, R2R=args.R2R,
-                #            fig=fig_main3d, ax=ax_main3d, step=step,
-                #            tmp_photo_dir = args.tmp_img_savepath, filename = "MPPI_3D"))
-            except:
-                print("Tracking 3D Img Could Not Save")
-
-            try:
-                # imgs_main.append(visualize_tracking(target_state_true=target_state_true, target_state_ckf=ckf.x.reshape(M_target,dm),target_states_true=target_states_true.T.reshape(-1,M_target,dm)[:step],
-                #            radar_state=radar_state,radar_states_MPPI=radar_states_MPPI,
-                #            cost_MPPI=cost_MPPI, FIMs=FIMs[:(step//update_freq_control)],
-                #            R2T=args.R2T, R2R=args.R2R,C=C,
-                #            fig=fig_main, axes=axes_main, step=step,
-                #            tmp_photo_dir = args.tmp_img_savepath, filename = "MPPI_CKF"))
-
-                imgs_main.append(visualize_tracking(target_state_true=target_state_true, target_state_ckf=ckf.x.reshape(M_target,dm),target_states_true=target_states_true.T.reshape(-1,M_target,dm)[:step],
-                           radar_state=radar_state,radar_states_MPPI=radar_states_MPPI,radar_state_history=radar_state_history[max(step // update_freq_control - args.tail_length,0):step // update_freq_control],
-                           cost_MPPI=cost_MPPI, FIMs=FIMs[:(step//update_freq_control)],
-                           R2T=args.R2T, R2R=args.R2R,C=C,
-                           fig=fig_main, axes=axes_main, step=step,
-                           tmp_photo_dir = args.tmp_img_savepath, filename = "MPPI_CKF"))
-
-
-            except Exception as error:
-                print("Tracking Img Could Not save: ", error)
-
-            try:
-                imgs_control.append(visualize_control(U=jnp.roll(U,1,axis=1),CONTROL_LIM=control_constraints,
-                           fig=fig_control, axes=axes_control, step=step,
-                           tmp_photo_dir = args.tmp_img_savepath, filename = "MPPI_control"))
-            except:
-                print("Control Img Could Not Save")
+            # try:
+            #     pass
+            #     # imgs_main3d.append(visualize_tracking3D(target_state_true=target_state_true, target_state_ckf=ckf.x.reshape(M_target,dm),target_states_true=target_states_true.T.reshape(-1,M_target,dm)[:step],
+            #     #            radar_state=radar_state,radar_states_MPPI=radar_states_MPPI,
+            #     #            cost_MPPI=cost_MPPI,
+            #     #            R2T=args.R2T, R2R=args.R2R,
+            #     #            fig=fig_main3d, ax=ax_main3d, step=step,
+            #     #            tmp_photo_dir = args.tmp_img_savepath, filename = "MPPI_3D"))
+            # except:
+            #     print("Tracking 3D Img Could Not Save")
+            #
+            # try:
+            #     # imgs_main.append(visualize_tracking(target_state_true=target_state_true, target_state_ckf=ckf.x.reshape(M_target,dm),target_states_true=target_states_true.T.reshape(-1,M_target,dm)[:step],
+            #     #            radar_state=radar_state,radar_states_MPPI=radar_states_MPPI,
+            #     #            cost_MPPI=cost_MPPI, FIMs=FIMs[:(step//update_freq_control)],
+            #     #            R2T=args.R2T, R2R=args.R2R,C=C,
+            #     #            fig=fig_main, axes=axes_main, step=step,
+            #     #            tmp_photo_dir = args.tmp_img_savepath, filename = "MPPI_CKF"))
+            #
+            #     imgs_main.append(visualize_tracking(target_state_true=target_state_true, target_state_ckf=ckf.x.reshape(M_target,dm),target_states_true=target_states_true.T.reshape(-1,M_target,dm)[:step],
+            #                radar_state=radar_state,radar_states_MPPI=radar_states_MPPI,radar_state_history=radar_state_history[max(step // update_freq_control - args.tail_length,0):step // update_freq_control],
+            #                cost_MPPI=cost_MPPI, FIMs=FIMs[:(step//update_freq_control)],
+            #                R2T=args.R2T, R2R=args.R2R,C=C,
+            #                fig=fig_main, axes=axes_main, step=step,
+            #                tmp_photo_dir = args.tmp_img_savepath, filename = "MPPI_CKF"))
+            #
+            #
+            # except Exception as error:
+            #     print("Tracking Img Could Not save: ", error)
+            #
+            # try:
+            #     imgs_control.append(visualize_control(U=jnp.roll(U,1,axis=1),CONTROL_LIM=control_constraints,
+            #                fig=fig_control, axes=axes_control, step=step,
+            #                tmp_photo_dir = args.tmp_img_savepath, filename = "MPPI_control"))
+            # except:
+            #     print("Control Img Could Not Save")
 
 
 
@@ -524,14 +524,14 @@ def main(args):
         ckf.update(np.reshape(measurement_actual,(-1,1)), hx_args=(radar_state[:,:3], M_target, dm,args.N_radar))
         print(f"Step {step} - Tracking ")
 
-        target_state_mse[step-1] = jnp.sqrt(jnp.sum(ckf.x - target_state_true.reshape(-1,1))**2)
+        # target_state_mse[step-1] = jnp.sqrt(jnp.sum(ckf.x - target_state_true.reshape(-1,1))**2)
 
-    print("Saving Sum of Squared Errors")
-    np.savetxt(os.path.join(args.results_savepath,f'rmse_{args.seed}.csv'), np.c_[np.arange(1,args.N_steps+1),target_state_mse], delimiter=',',header="k,rmse",comments='')
-    visualize_target_mse(target_state_mse, fig_mse, axes_mse, args.results_savepath, filename="target_mse")
-    control_hz = 1/np.mean(mppi_times[1:])
-    print(f"MPPI Controller running at {np.round(control_hz,3)} Hz")
-    np.savetxt(os.path.join(args.results_savepath,f'controlhz_{args.seed}.csv'), mppi_times[1:], delimiter=',',header="seconds",comments='')
+    # print("Saving Sum of Squared Errors")
+    # np.savetxt(os.path.join(args.results_savepath,f'rmse_{args.seed}.csv'), np.c_[np.arange(1,args.N_steps+1),target_state_mse], delimiter=',',header="k,rmse",comments='')
+    # visualize_target_mse(target_state_mse, fig_mse, axes_mse, args.results_savepath, filename="target_mse")
+    # control_hz = 1/np.mean(mppi_times[1:])
+    # print(f"MPPI Controller running at {np.round(control_hz,3)} Hz")
+    # np.savetxt(os.path.join(args.results_savepath,f'controlhz_{args.seed}.csv'), mppi_times[1:], delimiter=',',header="seconds",comments='')
 
     if args.save_images:
         # images = [imageio.imread(file) for file in imgs_main3d]
@@ -567,7 +567,7 @@ def plot_traj(targets_traj, radars_traj, path):
     fig, ax = plt.subplots(figsize=(6, 6))
 
     # Style config
-    dark_green = '#2e8b57'
+    target_traj_color = '#2e8b57'
     target_marker_color = '#006400'
     radar_traj_color = '#8b0000'  # DarkRed
     radar_marker_color = '#ff0000'  # Bright Red
@@ -578,7 +578,7 @@ def plot_traj(targets_traj, radars_traj, path):
         y = targets[i, 1]
         for t in range(1, N):
             alpha = 0.3 + 0.7 * t / N
-            ax.plot(x[t - 1:t + 1], y[t - 1:t + 1], color=dark_green, linewidth=2, alpha=alpha)
+            ax.plot(x[t - 1:t + 1], y[t - 1:t + 1], color=target_traj_color, linewidth=2, alpha=alpha)
         ax.plot(x[-1], y[-1], 'o', color=target_marker_color, markersize=6,
                 label='Target Position' if i == 0 else "")
 
@@ -587,7 +587,7 @@ def plot_traj(targets_traj, radars_traj, path):
         x = radars_traj[:, r, 0]
         y = radars_traj[:, r, 1]
         for t in range(1, n):
-            alpha = 0.2 + 0.6 * t / n
+            alpha = 0.1 + 0.9 * t / n
             ax.plot(x[t - 1:t + 1], y[t - 1:t + 1], color=radar_traj_color, linewidth=1.5, alpha=alpha)
         # current radar position
         ax.plot(x[-1], y[-1], 's', color=radar_marker_color, markersize=5,
@@ -640,7 +640,7 @@ if __name__ == "__main__":
     parser.add_argument('--dt_ckf', default=0.025,type=float, help='Frequency at which the radar receives measurements and updated Cubature Kalman Filter')
     parser.add_argument('--dt_control', default=0.1,type=float,help='Frequency at which the control optimization problem occurs with MPPI')
     parser.add_argument('--N_radar',default=6,type=int,help="The number of radars in the experiment")
-    parser.add_argument("--N_steps",default=400,type=int,help="The number of steps in the experiment. Total real time duration of experiment is N_steps x dt_ckf")
+    parser.add_argument("--N_steps",default=500,type=int,help="The number of steps in the experiment. Total real time duration of experiment is N_steps x dt_ckf")
     parser.add_argument('--results_savepath', default="results",type=str, help='Folder to save bigger results folder')
     parser.add_argument('--experiment_name', default="experiment",type=str, help='Name of folder to save temporary images to make GIFs')
     parser.add_argument('--move_radars', action=argparse.BooleanOptionalAction,default=True,help='Do you wish to allow the radars to move? --move_radars for yes --no-move_radars for no')
